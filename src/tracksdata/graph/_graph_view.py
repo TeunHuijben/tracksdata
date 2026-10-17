@@ -6,6 +6,7 @@ import bidict
 import numpy as np
 import polars as pl
 import rustworkx as rx
+from typing_extensions import override
 
 from tracksdata.attrs import Filter
 from tracksdata.constants import DEFAULT_ATTR_KEYS
@@ -376,6 +377,7 @@ class GraphView(MappedGraphMixin, RustWorkXGraph):
                     pass
             return keys
 
+    @override
     def _validate_attr_keys(
         self,
         attr_keys: Sequence[str] | str | None,
@@ -388,6 +390,22 @@ class GraphView(MappedGraphMixin, RustWorkXGraph):
         A view built with an explicit `node_attr_keys` list is otherwise a trap:
         the key exists, the root has it, and the error says only that this graph
         does not.
+
+        Parameters
+        ----------
+        attr_keys : Sequence[str] | str | None
+            The attribute keys to validate. `None` means "all keys" and is always valid.
+        mode : Literal["node", "edge"]
+            Whether to validate against node or edge attribute keys. The root-fallback
+            hint only ever applies to `"node"`; edge keys raise exactly as the base
+            implementation does.
+
+        Raises
+        ------
+        KeyError
+            If any key is not a declared attribute key of this view. When the key is
+            held by the root but excluded from this view, and `root_fallback` was not
+            set, the message also names `root_fallback=True` as the fix.
         """
         try:
             super()._validate_attr_keys(attr_keys, mode)
