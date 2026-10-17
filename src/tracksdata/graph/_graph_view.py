@@ -414,8 +414,8 @@ class GraphView(MappedGraphMixin, RustWorkXGraph):
                 raise
             if isinstance(attr_keys, str):
                 attr_keys = [attr_keys]
-            missing = set(attr_keys) - set(self.node_attr_keys(return_ids=True))
-            on_root = sorted(missing & set(self._root.node_attr_keys(return_ids=True)))
+            _, missing = self._split_node_attr_keys(attr_keys)
+            on_root = sorted(set(missing) & set(self._root.node_attr_keys(return_ids=True)))
             if not on_root:
                 raise
             raise KeyError(
