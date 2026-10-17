@@ -1097,25 +1097,39 @@ class GraphView(MappedGraphMixin, RustWorkXGraph):
             raise RuntimeError("Out of sync graph view cannot be used to get predecessors")
         return super().predecessors(node_ids, attr_keys, return_attrs=return_attrs)
 
-    def _split_node_attr_keys(self, attr_keys: Sequence[str]) -> tuple[list[str], list[str]]:
+    def _split_node_attr_keys(self, attr_keys: Sequence[str] | None) -> tuple[list[str], list[str]]:
         """
-        Partition requested node attribute keys into those this view holds and
-        those only the root holds.
+        Partition requested node attribute keys by whether this view holds them
+        locally.
 
-        Only ever returns root keys when the view was built with
-        ``root_fallback=True``; otherwise every key is reported as local and the
-        usual validation in the local read path rejects the ones that are not.
-        Keys that exist on neither the view nor the root still raise, here via
-        the root's own validation.
+        Purely a membership check against this view's own `node_attr_keys()` --
+        it does not consult `root_fallback` or validate `request_from_root`
+        against the root. Callers decide what to do with each half.
+
+        `None` means "every key this view holds" -- it never reaches into the
+        root, since a fallback would silently pull in the columns the view was
+        built to leave out.
+
+        Parameters
+        ----------
+        attr_keys : Sequence[str] | None
+            The requested keys to partition. `None` means "every key this view
+            holds" (see above).
+
+        Returns
+        -------
+        tuple[list[str], list[str]]
+            `(present_locally, request_from_root)`, each in the order keys
+            appeared in `attr_keys` (or in `node_attr_keys()` order, when
+            `attr_keys` is `None`).
         """
-        if not self._root_fallback:
-            return list(attr_keys), []
+        if attr_keys is None:
+            return self.node_attr_keys(return_ids=True), []
 
         local = set(self.node_attr_keys(return_ids=True))
-        root_keys = [k for k in attr_keys if k not in local]
-        if root_keys:
-            self._root._validate_attr_keys(root_keys, "node")
-        return [k for k in attr_keys if k in local], root_keys
+        present_locally = [k for k in attr_keys if k in local]
+        request_from_root = [k for k in attr_keys if k not in local]
+        return present_locally, request_from_root
 
     def _local_node_attrs_from_node_ids(
         self,
@@ -1265,20 +1279,24 @@ class GraphView(MappedGraphMixin, RustWorkXGraph):
         """
         id_keys = [DEFAULT_ATTR_KEYS.NODE_ID, DEFAULT_ATTR_KEYS.EDGE_SOURCE, DEFAULT_ATTR_KEYS.EDGE_TARGET]
 
-        if attr_keys is None:
-            # "every key" means every key this view holds -- a fallback would
-            # silently pull in the columns the view was built to leave out.
-            return self._local_node_attrs_from_node_ids(id_keys, node_ids=node_ids, attr_keys=None, unpack=unpack)
-
         if isinstance(attr_keys, str):
             attr_keys = [attr_keys]
-        attr_keys = list(dict.fromkeys(attr_keys))
+        elif attr_keys is not None:
+            attr_keys = list(dict.fromkeys(attr_keys))
+
+        if not self._root_fallback:
+            # Nothing to route: every key is either local (fine) or missing,
+            # and the usual local-read validation rejects the latter.
+            return self._local_node_attrs_from_node_ids(id_keys, node_ids=node_ids, attr_keys=attr_keys, unpack=unpack)
 
         local_keys, root_keys = self._split_node_attr_keys(attr_keys)
 
         if not root_keys:
-            return self._local_node_attrs_from_node_ids(id_keys, node_ids=node_ids, attr_keys=attr_keys, unpack=unpack)
+            return self._local_node_attrs_from_node_ids(id_keys, node_ids=node_ids, attr_keys=local_keys, unpack=unpack)
 
+        # root_keys is only ever non-empty when attr_keys was an explicit list --
+        # _split_node_attr_keys(None) always returns an empty second element.
+        self._root._validate_attr_keys(root_keys, "node")
         return self._fallback_node_attrs_from_node_ids(
             id_keys,
             node_ids=node_ids,
